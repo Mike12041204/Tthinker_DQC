@@ -3970,8 +3970,10 @@ int Graph::LoadGraph(char* szgraph_file) // create 1-hop neighbors
 //	delete []temp_array2;
 //}
 
+// MIKE - here is generate B
 void Graph::GenLevel2NBs()  // create 2-hop neighbors
 {
+	// each thread has arrays to work with
 	int** set_out_single, **set_in_single, **temp_array, **temp_array2, **pnb_list;
 	bool** pbflags;
 	set_out_single = new int*[num_compers];
@@ -3982,9 +3984,11 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 	pbflags = new bool*[num_compers];
 
 	//-------
+	// initialize each threads arrays
 #pragma omp parallel for schedule(dynamic, 1) num_threads(num_compers)
 	for(int i=0; i<num_compers; i++)
 	{
+		// these are all used as DIA arrays based on vertexids
 		set_out_single[i] = new int[mnum_of_vertices];
 		set_in_single[i] = new int[mnum_of_vertices];
 		temp_array[i] = new int[mnum_of_vertices];
@@ -4005,7 +4009,10 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 //	memset(set_out_single, 0, sizeof(int)*mnum_of_vertices);
 //	memset(set_in_single, 0, sizeof(int)*mnum_of_vertices);
 
+	// initialize 2hop adj write location
 	mpplvl2_nbs = new int*[mnum_of_vertices]; // mpplvl2_nbs[i] = node i's level-2 neighbors, first element keeps the 2-hop-list length
+
+	// initialize vectors for temp work
 	vector<int> bi_nbs[num_compers];
 	vector<int> vec_out[num_compers];
 	vector<int> vec_in[num_compers];
@@ -4015,44 +4022,77 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 
 	auto start = steady_clock::now();
 
+	// for each vertex
 #pragma omp parallel for schedule(dynamic, 1) num_threads(num_compers)
 	for(int i=0; i<mnum_of_vertices; i++)
 	{
+		// temp array is out adj, temp array 2 is in adj
+
 		int tid = omp_get_thread_num();
 
+		// vertices number of out adj
 		int out_size = mppadj_lists_o[i][0];
+		// vertices number of in adj
 		int in_size = mppadj_lists_i[i][0];
+
+		// if the vertex has both in and out adj
 		if(out_size > 0 && in_size > 0)
 		{
+			// set DIA so all vertices which are out adj to vertex i have value 1
 			for(int j=1; j<=out_size; j++)
 				temp_array[tid][mppadj_lists_o[i][j]] = 1;
 
+			// same for in adj
 			for(int j=1; j<=in_size; j++)
 				temp_array2[tid][mppadj_lists_i[i][j]] = 1;
 
-			//get bidirectional connected neighbors, O and I
 
+			//get bidirectional connected neighbors, O and I
+			// for all out adj
 			for(int j=1; j<=out_size; j++)
 			{
+				// get the out adj vertexid
 				int v = mppadj_lists_o[i][j];
+
+				// if the out adj is also in adj
 				if(temp_array2[tid][v] == 1)
+
+					// add the vertex to bidirectional adj vector
 					bi_nbs[tid].push_back(v);
+
+				// else the adj is only out
 				else
 				{
+					// add to DIA and vector for out adj
+					// MIKE - do we really need set_out_single and set_in_single? I feel we should just continue to reference temp arrays since the are already DIA
 					set_out_single[tid][v] = 1;
 					vec_out[tid].push_back(v);
 				}
 			}
 
+			// for all in adj
 			for(int j=1; j<=in_size; j++)
 			{
+				// get in adj vertex id
 				int v = mppadj_lists_i[i][j];
+
+				// if in adj is NOT also out adj
 				if(temp_array[tid][v] == 0)
 				{
+					// add to DIA and vector for in adj
 					set_in_single[tid][v] = 1;
 					vec_in[tid].push_back(v);
 				}
 			}
+
+			// MIKE - at this point:
+			// temp_array: DIA for each vertex on out adj
+			// temp_array2: DIA for each vertex on in adj
+			// bi_nbs: vector of bidirectional adj
+			// vec_out: vector of out only adj
+			// vec_in: vector of in only adj
+			// set_out_single: DIA for each vertex on out only adj
+			// set_in_single: DIA for each vertex on in only adj
 
 			// repeat pruning
 			int round = 1;
@@ -4060,49 +4100,79 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 			int out_single_size, in_single_size;
 			do {
 				//update So and Si
+				// size of only out and in vertices
 				out_single_size = vec_out[tid].size();
 				in_single_size = vec_in[tid].size();
 
+				// for all bi adj
 				for(int j=0; j<bi_nbs[tid].size();j++)
 				{
+					// add back in bi adj to out and in adj
 					vec_out[tid].push_back(bi_nbs[tid][j]);
 					vec_in[tid].push_back(bi_nbs[tid][j]);
 				}
 
 				//check the 1-hop neighbors which only connected in one direction
+				// for all out adj
 				for(int j=0; j<vec_out[tid].size();j++)
 				{
+					// get out adj vertexid
 					int vn = vec_out[tid][j];
+
+					// for all out adj of out vertex
 					for(int k=1; k<=mppadj_lists_o[vn][0]; k++)
 					{
+						// get vertexid of new out adj
 						nb = mppadj_lists_o[vn][k];
+
+						// if it is a current valid in adj 
 						if(set_in_single[tid][nb] == round)
 						{
+							// continue it as a valid in adj
 							set_in_single[tid][nb]++;
+
+							// add it to the next level in adj vector
 							temp_vec_in[tid].push_back(nb);
 						}
 					}
 				}
 
+				// for all in adj, same as last for
 				for(int j=0; j<vec_in[tid].size();j++)
 				{
+					// get vertexid
 					int vn = vec_in[tid][j];
+
+					// for all in adj of in adj
 					for(int k=1; k<=mppadj_lists_i[vn][0]; k++)
 					{
+						// get vertexid
 						nb = mppadj_lists_i[vn][k];
+
+						// if vertex is out adj
 						if(set_out_single[tid][nb] == round)
 						{
+							// continue as out adj
 							set_out_single[tid][nb]++;
+
+							// add out adj to next level vector
 							temp_vec_out[tid].push_back(nb);
 						}
 					}
 				}
 
+				// set out and in vectors as temp next level ones
 				vec_out[tid].swap(temp_vec_out[tid]);
 				vec_in[tid].swap(temp_vec_in[tid]);
+
+				// clear temp vectors
 				temp_vec_out[tid].clear();
 				temp_vec_in[tid].clear();
+
+				// increment round counter
 				round++;
+
+				// continue while some in or out adj has been removed in the last level
 			} while(vec_out[tid].size()<out_single_size || vec_in[tid].size()<in_single_size);
 
 			//reset single set
@@ -4111,7 +4181,6 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 
 			for(int j=1; j<=in_size; j++)
 				set_in_single[tid][mppadj_lists_i[i][j]] = 0;
-
 			//reset gptemp_array
 			for(int j=1; j<=out_size; j++)
 				temp_array[tid][mppadj_lists_o[i][j]] = 0;
@@ -4139,57 +4208,98 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 				pbflags[tid][vec_in[tid][j]] = true;
 			}
 
-			//add the straightforward 2hop neighbors
+			// MIKE - at this point
+			// pnb_list: has the twohop adj from onehop adj, O, and I (needs B)
+			// pbflags: is DIA for each vertex on whether it is a twohop adj or not
+
+			// add back bi out and in adj to out and in adj vectors
 			for(int j=0; j<bi_nbs[tid].size();j++)
 			{
 				vec_out[tid].push_back(bi_nbs[tid][j]);
 				vec_in[tid].push_back(bi_nbs[tid][j]);
 			}
 
+			// MIKE - the next steps are performign the four unions of intersections described in the paper to find case B twohop adj
+
+			// for all out adj
 			for (int j=0; j<vec_out[tid].size(); j++)
 			{
+				// get vertexid
 				int u = vec_out[tid][j];
+
+				// for all out adj of out adj
 				for(int k=1; k<=mppadj_lists_o[u][0]; k++)
 				{
+					// get vertexid
 					int v = mppadj_lists_o[u][k];
+
+					// if vertex is not self and is not already 2hop adj and is not already considered in this step
 					if(v != i && pbflags[tid][v] == false && temp_array[tid][v] != 1)
 					{
+						// add to temp vector and mark as considered
+						// MIKE - do we need temp_vec here? Don't seem to use it
 						temp_vec[tid].push_back(v);
 						temp_array[tid][v]=1;
 					}
 				}
 			}
 
+			// for all out adj
 			for (int j=0; j<vec_out[tid].size(); j++)
 			{
+				// get vertexid
 				int u = vec_out[tid][j];
+
+				// for all in adj of out adj
 				for(int k=1; k<=mppadj_lists_i[u][0]; k++)
 				{
+					// get vertexid
 					int v = mppadj_lists_i[u][k];
+
+					// if made it through last step
 					if(temp_array[tid][v] == 1)
+
+						// mark as passing this step
 						temp_array[tid][v]=2;
 				}
 			}
 
+			// for all in adj
 			for (int j=0; j<vec_in[tid].size(); j++)
 			{
+				// get vertexid
 				int u = vec_in[tid][j];
+
+				// for all out out adj of in adj
 				for(int k=1; k<=mppadj_lists_o[u][0]; k++)
 				{
+					// get vertexid
 					int v = mppadj_lists_o[u][k];
+
+					// if vertex passes last step
 					if(temp_array[tid][v] == 2)
+
+						// mark as passing this step
 						temp_array[tid][v]=3;
 				}
 			}
 
+			// for all in adj
 			for (int j=0; j<vec_in[tid].size(); j++)
 			{
+				// get vertexid
 				int u = vec_in[tid][j];
+
+				// for all in adj of in adj
 				for(int k=1; k<=mppadj_lists_i[u][0]; k++)
 				{
+					// get vertexid
 					int v = mppadj_lists_i[u][k];
+
+					// if vertex passed last step and is not alreayd in twohop adj
 					if(temp_array[tid][v] == 3 && pbflags[tid][v] == false)
 					{
+						// add to twohop adj
 						pbflags[tid][v] = true;
 						pnb_list[tid][nlist_len++] = v;
 					}
@@ -4200,16 +4310,21 @@ void Graph::GenLevel2NBs()  // create 2-hop neighbors
 			for(int j=0; j<temp_vec_size; j++)
 				temp_array[tid][temp_vec[tid][j]] = 0;
 
+			// sort twohop adj
 			if(nlist_len>1)
 				qsort(pnb_list[tid], nlist_len, sizeof(int), comp_int);
+			
+			// allocate and copy final twohop adj location
 			mpplvl2_nbs[i] = new int[nlist_len+1];
 			mpplvl2_nbs[i][0] = nlist_len; //first element keeps the 2-hop-list length
 			if(nlist_len>0)
 				memcpy(&mpplvl2_nbs[i][1], pnb_list[tid], sizeof(int)*nlist_len);
 
+			// reset flags
 			for(int j=0;j<nlist_len;j++)
 				pbflags[tid][pnb_list[tid][j]] = false;
 
+			// clear memory
 			bi_nbs[tid].clear();
 			vec_out[tid].clear();
 			vec_in[tid].clear();

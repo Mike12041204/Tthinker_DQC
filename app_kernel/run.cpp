@@ -41,7 +41,9 @@ int main(int argc, char **argv)
 	gdmin_deg_ratio_i = atof(argv[4]);
 	gnmin_size = atoi(argv[5]);
 	gnmax_size = INT_MAX;
+    // out degree requirement for the minimum size
     gnmin_deg_o = ceil(gdmin_deg_ratio_o * (gnmin_size - 1));
+    // in degree requirement for the minimum size
     gnmin_deg_i = ceil(gdmin_deg_ratio_i * (gnmin_size - 1));
 	TIME_THRESHOLD = atof(argv[6]);
 	kernel_file = argv[7];
