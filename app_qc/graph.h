@@ -701,10 +701,13 @@ inline bool Graph::IsValidCand(VERTEX* pvertex, int nclique_size, CLQ_STAT *pclq
 		return false;
 	if(pvertex->nclique_deg_i+pvertex->ncand_deg_i<pclq_stat->nmin_ext_deg_i)
 		return false;
+
+	// non bound based
 	else if(pvertex->nclique_deg_o+pvertex->ncand_deg_o<GetMinDegO(nclique_size+pvertex->ncand_deg_o+1))
 		return false;
 	else if(pvertex->nclique_deg_i+pvertex->ncand_deg_i<GetMinDegI(nclique_size+pvertex->ncand_deg_i+1))
 		return false;
+
 	else if(pvertex->nclique_deg_o+pclq_stat->nmax_cands-1<gpmin_degs_o[nclique_size+pclq_stat->nmax_cands])
 		return false;
 	else if(pvertex->nclique_deg_i+pclq_stat->nmax_cands-1<gpmin_degs_i[nclique_size+pclq_stat->nmax_cands])
@@ -727,6 +730,7 @@ inline void Graph::Output1Clique(VERTEX *pclique, int nclique_size, FILE *gfpout
 
 }
 
+// MIKE - this seems like what we want to do in P0, investigate further
 //Guimu-condense:
 void Graph::CompressGlobalGraph(VERTEX *pvertices, int num_of_cands)
 {
@@ -854,7 +858,7 @@ void Graph::CompressGlobalGraph(VERTEX *pvertices, int num_of_cands)
 	mnum_of_vertices = num_of_cands;
 }
 
-
+// MIKE - this method is equivalent to initialize tasks in our program
 VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 {
 	int i, j, num_of_vertices, nmax_deg, nmaxdeg_vertex;
@@ -915,8 +919,13 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 	num_of_freq_cands = 0;
 	nrm_start = 0;
 	nrm_end = 0;
+
+	// MIKE - code is up to here
+
+	// for all vertices
 	for(i=0;i<num_of_vertices;i++)
 	{
+		// initialize vertex information
 		pvertices[i].nvertex_no = i;
 		pvertices[i].nclique_deg_o = 0;
 		pvertices[i].nclique_deg_i = 0;
@@ -927,6 +936,7 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 		else
 			pvertices[i].nlvl2_nbs = 0;
 
+		// if vertex has minimum number of out, in, and lvl2 adj mark as valid candidate
 		if(mppadj_lists_o[i][0]>=gnmin_deg_o && mppadj_lists_i[i][0]>=gnmin_deg_i
 				&& (!mblvl2_flag || mblvl2_flag && mpplvl2_nbs[i][0]>=gnmin_size-1)) // degree >= r * (min_size - 1)  AND  |vertices_within-2hops| > min_size - 1
 		{
@@ -934,6 +944,7 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 			pvertices[i].bto_be_extended = true;
 			gpremain_vertices[num_of_freq_cands++] = i;//record in remain_array
 		}
+		// else mark as pruned
 		else
 		{
 			pvertices[i].bis_cand = false;
@@ -942,28 +953,50 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 		}
 	}
 
+	// MIKE - in the following two loops we will perform a k-core of the graph in two steps:
+	// first by updating based on remaining vertices, until they make up less than half
+	// then when most vertices are remaining we update using removed vertices
+
 	//num_of_freq_cands will record how many vertices still remain.
 	//num_of_cands = num_of_vertices at the beginning;
 	//Update only when less than half of the candidate need to be remained. recursively update
+	// while less than half of remaining candidates were pruned in the last iteration
 	while(num_of_freq_cands<num_of_cands/2)
 	{
+		// reset number of candidates
 		num_of_cands = num_of_freq_cands;
+
+		// for all candidates
 		for(i=0;i<num_of_cands;i++)
 		{
+			// reset degrees
+			// only concerned about can degrees because there are no members at this stage
 			pvertices[gpremain_vertices[i]].ncand_deg_o = 0;
 			pvertices[gpremain_vertices[i]].ncand_deg_i = 0;
 		}
+
+
+		// UPDATE DEGREES AFTER PRUNING
+		// for all candidates
 		for(i=0;i<num_of_cands;i++)
 		{
 			//set the ncand_deg for candidate vertex
+			// get a remaining vertex
 			nvertex_no = gpremain_vertices[i];
+
+			// for all out adjacencies of the remaining vertex
 			for(j=1;j<=mppadj_lists_o[nvertex_no][0];j++)
 			{
+				// get adjacent vertex
 				norder = mppadj_lists_o[nvertex_no][j];
+
+				// if the vertex is still a valid candiates (it hasn't been pruned yet)
 				if(pvertices[norder].bis_cand)//some neighbor may not be a candidate
+					// increase its indeg
 					pvertices[norder].ncand_deg_i++;
 			}
 
+			// same but for all in adjacencies
 			for(j=1;j<=mppadj_lists_i[nvertex_no][0];j++)
 			{
 				norder = mppadj_lists_i[nvertex_no][j];
@@ -971,16 +1004,27 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 					pvertices[norder].ncand_deg_o++;
 			}
 		}
+
 		num_of_freq_cands = 0;
 		nrm_start = 0;
 		nrm_end = 0;
+		
+		// PRUNE AFTER UPDATING DEGREES
 		//degree was updated in above code. need to remove vertex based on degree recursively here.
+		// for all candidates
 		for(i=0;i<num_of_cands;i++)
 		{
+			// get candidate
 			norder = gpremain_vertices[i];
+
 			//dqc: check 2 direction
+			// if candiates meets in and out degree requirement
 			if(pvertices[norder].ncand_deg_o>=gnmin_deg_o && pvertices[norder].ncand_deg_i>=gnmin_deg_i) // degree updated: degree >= r * (min_size - 1)
+				
+				// put candidate in remaining vertices
 				gpremain_vertices[num_of_freq_cands++] = norder;
+
+			// else put the candidate in removed vertices and mark as not valid
 			else
 			{
 				pvertices[norder].bis_cand = false;
@@ -989,9 +1033,12 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 			}
 		}
 	}
+
+	// out of loop all pruning done, set final number of candidates
 	num_of_cands = num_of_freq_cands;
 
 	//gpremoved_vertices record the last time removed vertices. Need to update this v's nbs's degree.
+	// while not all removed vertices have been processed
 	while(nrm_end>nrm_start)
 	{
 		nvertex_no = gpremoved_vertices[nrm_start];
@@ -1099,7 +1146,7 @@ VERTEX * Graph::Cliques(char *szgraph_filename, int & num_of_cands)
 		return NULL;
 }
 
-
+// MIKE - this method is equivalent to expand level in our program
 int Graph::Expand(VERTEX *pvertices, int nclique_size, int num_of_cands, int num_of_tail_vertices, FILE *gfpout)
 {
 	VERTEX *pnew_vertices, *pnew_cands, *pclique;
@@ -1363,6 +1410,7 @@ int Graph::ExpandOnce(VERTEX *pvertices, int nclique_size, int num_of_cands, int
 
 	return nmax_clique_size;
 }
+
 //remove the vertex that has just be processed from candidate list
 int Graph::RemoveCandVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, int num_of_tail_vertices, int ncur_pos)
 {
@@ -1373,14 +1421,22 @@ int Graph::RemoveCandVertex(VERTEX *pvertices, int nclique_size, int num_of_cand
 	nmin_deg_o = GetMinDegO(nclique_size+1);
 	nmin_deg_i = GetMinDegI(nclique_size+1);
 
+	// get total vertex count
 	num_of_vertices = nclique_size+num_of_cands+num_of_tail_vertices;
 
+	// reset vertex order map
 	for(i=0;i<num_of_vertices;i++)
 		gpvertex_order_map[pvertices[i].nvertex_no] = i; // update map[vertex_no] = position in pvertices[.]
 
 	nisvalid = 1;
+
+	// set last used vertex as not a candidate
 	pvertices[ncur_pos-1].bis_cand = false;//the last checked v will not check in the future.
+	
+	// get removed vertex number
 	nvertex_no = pvertices[ncur_pos-1].nvertex_no;
+	
+	// ignore the cond graphs part, just get the adjacency lists for the removed vertex
 	if(mnum_of_cond_graphs==0)
 	{
 		padj_list_o = mppadj_lists_o[nvertex_no];
@@ -1395,16 +1451,26 @@ int Graph::RemoveCandVertex(VERTEX *pvertices, int nclique_size, int num_of_cand
 	//get previously checked v's adj
 	//!!!update processed v's neighbor's degree when remove v from candidate
 	//update degree
+
+	// if there are out adjacencies of the removed vertex
 	if(padj_list_o!=NULL)
 	{
+		// for all the out adjacencies
 		for(i=1;i<=padj_list_o[0];i++)
 		{
+			// get its position in the vertex set
 			norder = gpvertex_order_map[padj_list_o[i]];
+
+			// if it is in the vertex set
 			if(norder>=0)
 			{
 				//use the order as an index to fetch the vertex in pvertices
+				// decrement in the incoming adjacencies of the out adjacent vertex
 				pvertices[norder].ncand_deg_i--;
+
 				//!!!Degree-Based Pruning
+				// check whether the vertex still meets the degree requirements after it has been updated
+				// this is checking only for failed vertices, not invalid candidates
 				if(pvertices[norder].ncand_deg_i+pvertices[norder].nclique_deg_i<nmin_deg_i)//todo check min_deg
 				{
 					if(norder<nclique_size)//type II pruning
@@ -1419,11 +1485,16 @@ int Graph::RemoveCandVertex(VERTEX *pvertices, int nclique_size, int num_of_cand
 		}
 	}
 
+	// if there are any in adjacencies
 	if(padj_list_i!=NULL)
 	{
+		// for all in adjacencies
 		for(i=1;i<=padj_list_i[0];i++)
 		{
+			// get the position of the adj in the vertex set
 			norder = gpvertex_order_map[padj_list_i[i]];
+
+			// if the adj is in the vertex set
 			if(norder>=0)
 			{
 				//use the order as an index to fetch the vertex in pvertices
@@ -1741,11 +1812,15 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 	int **pplvl2_nbs, **ppadj_lists_o, **ppadj_lists_i, nvertexset_size, *pcand_clqdegs_o, *pcand_clqdegs_i;
 	bool is_valid_can;
 
+	// we are not concerned with anything regarding tail vertices as they pertain only to exact cliques
 	VerifyVertices(pvertices, nclique_size, num_of_cands, num_of_tail_vertices, false);
 
+	// add to total vertices
 	ntotal_vertices = nclique_size+num_of_cands+num_of_tail_vertices;
 	//first the current v will be added into S.
 	//After that, we will check each v in the rest cand using this min_deg. so it will be nclique_size+2.
+
+	// precalculate in and out mindegs for vertex set
 	nmin_ext_deg_o = GetMinDegO(nclique_size+2);
 	nmin_ext_deg_i = GetMinDegI(nclique_size+2);
 
@@ -1753,6 +1828,7 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 	// === 1. move one v from ext_S to S ====
 
 	//copy pvertices' S part to pnew_vertices
+	// copy vertices to new vertices for editing
 	if(nclique_size>0)
 		memcpy(pnew_vertices, pvertices, sizeof(VERTEX)*nclique_size);
 	//move current vertex to S
@@ -1765,11 +1841,14 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 	pnew_vertices[nclique_size].bis_cand = false;
 	pnew_vertices[nclique_size].bto_be_extended = false;
 
+	// initialize new vertex set data
 	pnew_cands = &(pnew_vertices[nclique_size+1]);
 	num_of_new_cands = nclique_size+num_of_cands-ncur_pos-1;
 	if(num_of_new_cands>0)
 		memcpy(pnew_cands, &pvertices[ncur_pos+1], sizeof(VERTEX)*num_of_new_cands);
 	ntotal_new_exts = num_of_new_cands;
+
+	// ignore
 	if(bhas_tail)
 	{
 		for(i=nclique_size+num_of_cands;i<ntotal_vertices;i++)
@@ -1789,9 +1868,11 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 	// === 2. update deg for influenced vertex ====
 
 	//gpvertex_order_map: map[v_no] = index in pnew_vertices
+	// initialize vertex order map
 	for(i=0;i<nclique_size+1+ntotal_new_exts;i++)
 		gpvertex_order_map[pnew_vertices[i].nvertex_no] = i;
 
+	// get all adj lists
 	if(mnum_of_cond_graphs==0)
 	{
 		ppadj_lists_o = mppadj_lists_o;
@@ -1832,12 +1913,15 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 		}
 	}
 	//-----------------------------------------------------------
+
+
 	pcand_clqdegs_o = gptemp_array;
 	pcand_clqdegs_i = gptemp_array2;
 
 	//========================================================
 	// === 3. prunning: removing invalid vertices in candidate ====
 
+	// set all candidates as invalid
 	for(i=0;i<ntotal_new_exts;i++)
 		pnew_cands[i].bto_be_extended = false;
 	num_of_valid_cands = 0;
@@ -1869,22 +1953,34 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 //	}
 //	else
 //	{
+	
+	// get all level 2 adj
 	if(mnum_of_cond_graphs==0)
 		pplvl2_nbs = mpplvl2_nbs;
 	else
 		pplvl2_nbs = mpcond_graphs[mnum_of_cond_graphs-1].pplvl2_nbs;
+	
+	// if there are lvl2 adj of the added vertex
 	if(pplvl2_nbs[nvertex_no]!=NULL)
 	{
+		// for all lvl2 adj
 		for(i=1;i<=pplvl2_nbs[nvertex_no][0];i++)
 		{
+			// get the order adj in cands
 			norder = gpvertex_order_map[pplvl2_nbs[nvertex_no][i]]-nclique_size-1;
+
+			// if it is cands
 			if(norder>=0)
 			{
+				// set as valid
 				pnew_cands[norder].bto_be_extended = true;
+
 				//todo nmin_ext_deg = ⌈γ·(nclique_size+1+dext(S)(w))⌉
+				// if it meets minimum degree requirements
 				if(norder<num_of_new_cands && pnew_cands[norder].ncand_deg_o+pnew_cands[norder].nclique_deg_o>=nmin_ext_deg_o
 						&& pnew_cands[norder].ncand_deg_i+pnew_cands[norder].nclique_deg_i>=nmin_ext_deg_i)
 				{
+					// add its degrees to arrays for use in bound calculation
 					int index = num_of_valid_cands++;
 					pcand_clqdegs_o[index] = pnew_cands[norder].nclique_deg_o;
 					pcand_clqdegs_i[index] = pnew_cands[norder].nclique_deg_i;
@@ -1892,12 +1988,14 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 			}
 		}
 	}
-//	}
+
 	//========================================================
+
 
 	//sort valid cand based on indeg for bound pruning
 	qsort(pcand_clqdegs_o, num_of_valid_cands, sizeof(int), comp_int_des);
 	qsort(pcand_clqdegs_i, num_of_valid_cands, sizeof(int), comp_int_des);
+
 	//todo need to CalcLUBound for both direction
 	//need to have both in_pclq_stat and out_pclq_stat
 	CalcLUBound(pnew_vertices, nclique_size+1, pcand_clqdegs_o, pcand_clqdegs_i, num_of_valid_cands, pclq_stat);
@@ -1905,20 +2003,24 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 	//----------------------------------------------------------------------------------------
 	// ==== Upper- and Lower-Bound Based Pruning ====
 
+	// if valid bounds calculated
 	if(pclq_stat->nmin_cands<=pclq_stat->nmax_cands && pclq_stat->nmax_cands>0)
 	{
 		num_of_valid_cands = 0;
 		num_of_rmved_cands = 0;
+
+		// for all candidates
 		for(i=0;i<num_of_new_cands;i++)
 		{
 			//Type-I Degree-, Upper- and Lower-Bound Based Pruning (P3, P4, P5 in vldb paper)
 #ifdef BOUND
+			// apply degree based pruning
 			is_valid_can = IsValidCand(&pnew_cands[i], nclique_size+1, pclq_stat);
 #else
 			is_valid_can = true;
 #endif
 
-
+			// add vertex to remaining or removed array based on result
 			if(pnew_cands[i].bto_be_extended && is_valid_can)
 				gpremain_vertices[num_of_valid_cands++] = i;
 			else
@@ -1934,11 +2036,14 @@ int Graph::AddOneVertex(VERTEX *pvertices, int nclique_size, int num_of_cands, i
 			//or if has less v to be removed in cand, ncand_deg-- for removed vertex
 			if(num_of_valid_cands<num_of_rmved_cands)
 			{
+				// updating by intersecting with remain so reset vertex degrees
 				for(i=0;i<nclique_size+1+ntotal_new_exts;i++)
 				{
 					pnew_vertices[i].ncand_deg_o = 0;
 					pnew_vertices[i].ncand_deg_i = 0;
 				}
+
+				// for all candidates
 				for(i=0;i<num_of_valid_cands;i++)
 				{
 					nvertex_no = pnew_cands[gpremain_vertices[i]].nvertex_no;
